@@ -6,6 +6,7 @@ import { resolveTools } from './tools.js';
 import { run } from './run.js';
 import { parseSrt } from './srt.js';
 import { friendly } from './errors.js';
+import { capabilities, capabilitySummary, probe, analyze, transcode } from './codec.js';
 import { DOWNLOADS, newJob, getJob, allJobs, enqueue, cancel, remove, update, subscribe, listFiles, pub, loadFromDisk, stats } from './jobs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,6 +44,57 @@ function jobOr404(req, res) {
   if (!job) { res.status(404).json({ error: 'Esse trabalho já não existe.' }); return null; }
   return job;
 }
+
+app.get('/api/capabilities', async (_req, res) => {
+  const t = tools();
+  if (!t.ffmpeg) return res.status(424).json({ error: 'FFmpeg não está instalado.' });
+  try { res.json(capabilitySummary(await capabilities(t.ffmpeg))); } catch (e) { fail(res, e); }
+});
+
+// Codec reader: what is inside this file, can this FFmpeg read it, will browsers play it?
+app.post('/api/probe', async (req, res) => {
+  const job = jobOr404(req, res); if (!job) return;
+  const t = need(res, 'ffprobe', 'ffmpeg'); if (!t) return;
+  const src = pickMedia(job, req.body?.file);
+  if (!src) return res.status(400).json({ error: 'Não há vídeo ou áudio neste trabalho.' });
+  try {
+    const cap = await capabilities(t.ffmpeg);
+    const info = await probe(t.ffprobe, path.join(job.dir, src));
+    const { encoder, ...analysis } = analyze(info, cap);
+    res.json({ file: src, ...info, ...analysis, encoder });
+  } catch (e) { fail(res, e); }
+});
+
+app.post('/api/transcode', async (req, res) => {
+  const job = jobOr404(req, res); if (!job) return;
+  const t = need(res, 'ffprobe', 'ffmpeg'); if (!t) return;
+  const src = pickMedia(job, req.body?.file);
+  if (!src) return res.status(400).json({ error: 'Não há vídeo ou áudio neste trabalho.' });
+  let info, cap;
+  try { cap = await capabilities(t.ffmpeg); info = await probe(t.ffprobe, path.join(job.dir, src)); } catch (e) { return fail(res, e); }
+  const a = analyze(info, cap);
+  if (a.missing.length) return res.status(424).json({ error: `${a.missing[0].explain} ${a.missing[0].how}` });
+  res.json({ ok: true });
+  enqueue(job, async (signal) => {
+    update(job, { stage: 'a converter para formato compatível', progress: 0 });
+    await transcode({ ffmpeg: t.ffmpeg, cap, src, cwd: job.dir, hasVideo: !!info.video, duration: info.duration, signal,
+      onProgress: (p) => update(job, { progress: Math.round(p) }) });
+    return 'convertido';
+  });
+});
+
+// Open a local file (e.g. an unknown format) as a job so it can be inspected, converted and transcribed.
+app.post('/api/upload', (req, res) => {
+  const raw = String(req.query.name || 'ficheiro');
+  const name = path.basename(raw).replace(/[^\w.\- ()\[\]]+/g, '_').slice(0, 120) || 'ficheiro';
+  if (!MEDIA_RE.test(name)) return res.status(400).json({ error: 'Tipo de ficheiro não suportado (usa vídeo ou áudio).' });
+  const job = newJob({ kind: 'import', title: name, url: '' });
+  const out = fs.createWriteStream(path.join(job.dir, name));
+  req.pipe(out);
+  out.on('finish', () => { update(job, { status: 'done', stage: 'ficheiro aberto', progress: 100 }); res.json({ id: job.id }); });
+  out.on('error', (e) => { remove(job); fail(res, e); });
+  req.on('aborted', () => { out.destroy(); remove(job); });
+});
 
 app.get('/api/health', (_req, res) => res.json({ ...tools(), ...stats() }));
 

@@ -13,7 +13,7 @@ const RULES = [
   [/No space left/i, 'Sem espaço em disco.', 'Liberta espaço ou apaga downloads antigos na lista.'],
   [/Unknown encoder|Encoder .* not found|Unrecognized option 'c:v'/i, 'O teu FFmpeg não tem o codificador necessário.', 'Instala um FFmpeg completo (brew install ffmpeg / winget install Gyan.FFmpeg).'],
   [/No such filter: 'subtitles'|Filter not found|Error parsing filterchain/i, 'O teu FFmpeg não suporta gravar legendas no vídeo (falta libass).', 'Usa as legendas estilizadas (Remotion) ou instala um FFmpeg completo.'],
-  [/Invalid data found when processing input|moov atom not found/i, 'O ficheiro está corrompido ou incompleto.', 'Descarrega de novo.'],
+  [/Invalid data found when processing input|moov atom not found/i, 'O ficheiro está corrompido ou incompleto.', 'Tenta obter o ficheiro de novo ou usa outro.'],
   [/AbortError|aborted/i, 'Cancelado.', ''],
 ];
 
