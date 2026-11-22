@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLW Downloader</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --fg:#e8eaf0; --mut:#8b92a5; --acc:#6ea8fe; --bad:#ff6b6b; --ok:#5ad19a; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f5f6f8; --card:#fff; --fg:#14161c; --mut:#667085; --acc:#2563eb; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } .sub { color: var(--mut); margin: 0 0 24px; }
+  .card { background:var(--card); border-radius:14px; padding:16px; margin-bottom:16px; border:1px solid #8884; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  input, select, button { font:inherit; padding:10px 12px; border-radius:10px; border:1px solid #8886; background:transparent; color:inherit; }
+  input[type=url] { flex:1; min-width:200px; }
+  button { background:var(--acc); color:#fff; border:0; cursor:pointer; font-weight:600; }
+  button.ghost { background:transparent; color:var(--fg); border:1px solid #8886; }
+  button:disabled { opacity:.5; cursor:default; }
+  .meta { display:flex; gap:12px; align-items:center; } #thumb img { width:120px; display:block; border-radius:8px; }
+  .bar { height:8px; border-radius:99px; background:#8883; overflow:hidden; margin-top:10px; } .bar > i { display:block; height:100%; width:0; background:var(--acc); transition:width .2s; }
+  .err { color:var(--bad); white-space:pre-wrap; } .mut { color:var(--mut); font-size:14px; }
+  ul { padding-left: 18px; margin: 8px 0 0; } a { color: var(--acc); }
+  .tools span { margin-right:12px; font-size:13px; } .tools .ok { color:var(--ok); } .tools .no { color:var(--bad); }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>FLW Downloader</h1>
+  <p class="sub">yt-dlp · FFmpeg · Whisper · Remotion — corre localmente no teu computador.</p>
+
+  <div class="card tools" id="tools" aria-live="polite"></div>
+
+  <div class="card">
+    <div class="row">
+      <input type="url" id="url" placeholder="Cola o link do vídeo" aria-label="URL do vídeo">
+      <button id="go">Analisar</button>
+    </div>
+    <p class="err" id="err" hidden></p>
+  </div>
+
+  <div class="card" id="info" hidden>
+    <div class="meta"><span id="thumb"></span><div><strong id="title"></strong><div class="mut" id="sub"></div></div></div>
+    <div class="row" style="margin-top:12px">
+      <select id="kind"><option value="video">Vídeo (MP4)</option><option value="audio">Só áudio (MP3)</option></select>
+      <select id="height"></select>
+      <button id="dl">Descarregar</button>
+    </div>
+  </div>
+
+  <div class="card" id="job" hidden>
+    <div><strong id="stage">…</strong> <span class="mut" id="pct"></span></div>
+    <div class="bar"><i id="fill"></i></div>
+    <p class="err" id="jerr" hidden></p>
+    <div class="row" style="margin-top:12px" id="actions" hidden>
+      <select id="lang"><option value="auto">Idioma: auto</option><option value="pt">Português</option><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option></select>
+      <button class="ghost" id="tr">Transcrever (Whisper)</button>
+      <button class="ghost" id="burn">Legendas (FFmpeg)</button>
+      <button class="ghost" id="rem">Legendas estilizadas (Remotion)</button>
+    </div>
+    <ul id="files"></ul>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let jobId = null, es = null;
+
+const post = async (path, body) => {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+};
+const showErr = (el, msg) => { el.textContent = msg || ''; el.hidden = !msg; };
+
+fetch('/api/health').then((r) => r.json()).then((t) => {
+  const names = { ytdlp: 'yt-dlp', ffmpeg: 'ffmpeg', ffprobe: 'ffprobe', whisper: 'whisper', whisperModel: 'modelo whisper' };
+  $('tools').innerHTML = Object.entries(names).map(([k, n]) => `<span class="${t[k] ? 'ok' : 'no'}">${t[k] ? '✓' : '✗'} ${n}</span>`).join('');
+});
+
+$('go').onclick = async () => {
+  showErr($('err'), ''); $('info').hidden = true;
+  $('go').disabled = true; $('go').textContent = 'A analisar…';
+  try {
+    const i = await post('/api/info', { url: $('url').value.trim() });
+    $('thumb').replaceChildren();
+    if (i.thumbnail) { const im = new Image(); im.alt = ''; im.src = i.thumbnail; $('thumb').append(im); }
+    $('title').textContent = i.title;
+    $('sub').textContent = [i.uploader, i.duration && Math.round(i.duration / 60) + ' min'].filter(Boolean).join(' · ');
+    $('height').innerHTML = '<option value="">Melhor qualidade</option>' + i.heights.map((h) => `<option value="${h}">${h}p</option>`).join('');
+    $('info').hidden = false;
+  } catch (e) { showErr($('err'), e.message); }
+  $('go').disabled = false; $('go').textContent = 'Analisar';
+};
+$('kind').onchange = () => { $('height').hidden = $('kind').value === 'audio'; };
+
+function watch(id) {
+  jobId = id; es?.close();
+  $('job').hidden = false;
+  es = new EventSource(`/api/jobs/${id}/events`);
+  es.onmessage = (m) => {
+    const j = JSON.parse(m.data);
+    $('stage').textContent = j.stage || j.status;
+    $('pct').textContent = Math.round(j.progress) + '%';
+    $('fill').style.width = j.progress + '%';
+    showErr($('jerr'), j.error);
+    const busy = j.status === 'running';
+    document.querySelectorAll('#actions button').forEach((b) => (b.disabled = busy));
+    $('actions').hidden = !j.files.length && j.status !== 'done';
+    $('files').innerHTML = j.files.map((f) => `<li><a href="${f.url}" download>${f.name}</a></li>`).join('');
+  };
+}
+$('dl').onclick = async () => {
+  showErr($('jerr'), '');
+  try { const { id } = await post('/api/download', { url: $('url').value.trim(), kind: $('kind').value, height: $('height').value }); watch(id); }
+  catch (e) { $('job').hidden = false; showErr($('jerr'), e.message); }
+};
+const act = (path, extra = {}) => async () => {
+  showErr($('jerr'), '');
+  try { await post(path, { id: jobId, ...extra() }); watch(jobId); } catch (e) { showErr($('jerr'), e.message); }
+};
+$('tr').onclick = act('/api/transcribe', () => ({ language: $('lang').value }));
+$('burn').onclick = act('/api/burn', () => ({}));
+$('rem').onclick = act('/api/remotion', () => ({}));
+</script>
+</body>
+</html>

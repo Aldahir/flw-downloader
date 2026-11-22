@@ -1,0 +1,19 @@
+{
+  "name": "flw-downloader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "doctor": "node scripts/doctor.js"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.250",
+    "@remotion/renderer": "4.0.250",
+    "express": "^4.21.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.250"
+  }
+}
