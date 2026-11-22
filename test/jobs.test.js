@@ -58,3 +58,11 @@ test('delete removes files only when asked', () => {
   assert.ok(!fs.existsSync(j.dir));
   assert.equal(jobs.getJob(j.id), undefined);
 });
+
+test('listing files ignores yt-dlp temp files and survives files that vanish', () => {
+  const j = jobs.newJob({});
+  for (const f of ['v.mp4', 'v.mp4.part', 'v.mp4.ytdl', 'v.mp4.part-Frag12', 'x.temp']) fs.writeFileSync(path.join(j.dir, f), 'x');
+  assert.deepEqual(jobs.listFiles(j).map((f) => f.name), ['v.mp4']);
+  fs.rmSync(j.dir, { recursive: true });
+  assert.deepEqual(jobs.listFiles(j), []); // dir gone: no crash
+});

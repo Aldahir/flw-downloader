@@ -6,6 +6,7 @@ import { resolveTools } from './tools.js';
 import { run } from './run.js';
 import { parseSrt, groupWords } from './srt.js';
 import { friendly } from './errors.js';
+import { videoFormatArgs } from './formats.js';
 import { listModels, resolveModel, downloadModel, CATALOGUE } from './models.js';
 import { capabilities, capabilitySummary, probe, analyze, transcode } from './codec.js';
 import { DOWNLOADS, newJob, getJob, allJobs, enqueue, cancel, remove, update, subscribe, listFiles, pub, loadFromDisk, stats } from './jobs.js';
@@ -121,6 +122,7 @@ app.post('/api/info', async (req, res) => {
 
 app.post('/api/download', (req, res) => {
   const { url, kind = 'video', height, playlist = false, title } = req.body || {};
+  const limit = Math.min(MAX_PLAYLIST, Math.max(1, Math.floor(Number(req.body?.limit)) || MAX_PLAYLIST)); // user-chosen number of videos
   if (!validUrl(url)) return res.status(400).json({ error: 'Link inválido.' });
   const t = need(res, 'ytdlp', 'ffmpeg'); if (!t) return;
   const job = newJob({ url, title: typeof title === 'string' && title ? title.slice(0, 200) : url });
@@ -128,14 +130,14 @@ app.post('/api/download', (req, res) => {
 
   const args = ['--newline', '--ffmpeg-location', path.dirname(t.ffmpeg), '--restrict-filenames',
     '--progress-template', 'PROGRESS %(progress._percent_str)s|%(info.playlist_index)s|%(info.n_entries)s',
-    '--print', 'before_dl:TITLE %(title)s'];
-  if (playlist) args.push('--yes-playlist', '--playlist-end', String(MAX_PLAYLIST), '--ignore-errors',
+    '--progress', '--print', 'before_dl:TITLE %(title)s']; // --print implies quiet; --progress keeps the progress lines
+  if (playlist) args.push('--yes-playlist', '--playlist-end', String(limit), '--ignore-errors',
     '-o', '%(playlist_index)03d - %(title).70B [%(id)s].%(ext)s');
   else args.push('--no-playlist', '-o', '%(title).80B [%(id)s].%(ext)s');
   if (kind === 'audio') args.push('-x', '--audio-format', 'mp3');
   else {
     const h = Number(height);
-    args.push('-f', h ? `bv*[height<=${h}]+ba/b[height<=${h}]` : 'bv*+ba/b', '--merge-output-format', 'mp4');
+    args.push(...videoFormatArgs(h), '--merge-output-format', 'mp4');
   }
   args.push('--', url);
 

@@ -8,6 +8,7 @@ const RULES = [
   [/HTTP Error 403|Forbidden/i, 'O site recusou o acesso (403).', 'Tenta de novo daqui a pouco; o yt-dlp pode precisar de atualização (brew upgrade yt-dlp).'],
   [/HTTP Error 429|Too Many Requests/i, 'O site limitou os pedidos (429).', 'Espera alguns minutos antes de tentar outra vez.'],
   [/HTTP Error 404/i, 'Página não encontrada (404).', 'Confirma o link.'],
+  [/Requested format is not available/i, 'Este vídeo não tem o formato ou a qualidade pedidos.', 'Tenta "Melhor qualidade" ou outra resolução.'],
   [/Unable to download|getaddrinfo|Temporary failure in name resolution|Network is unreachable|timed out/i, 'Falha de rede.', 'Verifica a ligação à internet e tenta outra vez.'],
   [/live event will begin|is live|Premieres in/i, 'Este vídeo é uma emissão em direto ou estreia futura.', 'Tenta depois de terminar.'],
   [/No space left/i, 'Sem espaço em disco.', 'Liberta espaço ou apaga downloads antigos na lista.'],

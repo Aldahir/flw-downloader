@@ -128,9 +128,10 @@ function renderInfo(i, wasPlaylist) {
   const kind = h('select', {}, h('option', { value: 'video' }, 'Vídeo (MP4)'), h('option', { value: 'audio' }, 'Só áudio (MP3)'));
   const height = h('select', {}, h('option', { value: '' }, 'Melhor qualidade'), (i.heights || []).map((x) => h('option', { value: x }, `${x}p`)));
   kind.onchange = () => { height.hidden = kind.value === 'audio'; };
+  const limit = h('input', { type: 'number', min: 1, max: 100, value: Math.min(100, i.playlist?.count || 1), style: 'width:90px', 'aria-label': 'Quantos vídeos descarregar' });
   const start = (playlist, title) => async (e) => {
     e.target.disabled = true;
-    try { const { id } = await api('/api/download', { body: { url, kind: kind.value, height: height.value, playlist, title } }); await refreshJobs(); select(id); }
+    try { const { id } = await api('/api/download', { body: { url, kind: kind.value, height: height.value, playlist, title, limit: limit.value } }); await refreshJobs(); select(id); }
     catch (er) { showErr(er.message); }
     e.target.disabled = false;
   };
@@ -138,7 +139,7 @@ function renderInfo(i, wasPlaylist) {
     $('info').replaceChildren(h('strong', {}, i.playlist.title || 'Playlist'),
       h('div', { class: 'mut' }, `${i.playlist.count} vídeos${i.playlist.capped ? ' (máximo de 100 por trabalho)' : ''}`),
       h('ul', {}, i.playlist.entries.slice(0, 8).map((e) => h('li', {}, e.title)), i.playlist.count > 8 ? h('li', { class: 'mut' }, `… e mais ${i.playlist.count - 8}`) : null),
-      h('div', { class: 'row', style: 'margin-top:12px' }, kind, height, h('button', { onclick: start(true, i.playlist.title) }, 'Descarregar playlist')));
+      h('div', { class: 'row', style: 'margin-top:12px' }, kind, height, h('label', { class: 'chk' }, 'Primeiros', limit, 'vídeos'), h('button', { onclick: start(true, i.playlist.title) }, 'Descarregar playlist')));
   } else {
     $('info').replaceChildren(
       h('div', { class: 'meta' }, h('span', { id: 'thumb' }, i.thumbnail ? Object.assign(new Image(), { src: i.thumbnail, alt: '' }) : null),

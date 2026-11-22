@@ -14,11 +14,18 @@ let active = 0;
 const META = 'job.json';
 const PERSISTED = ['id', 'kind', 'title', 'url', 'status', 'stage', 'progress', 'error', 'errorDetail', 'createdAt'];
 
+// yt-dlp keeps temp files while downloading (.part, .ytdl, .part-FragN, .temp) and deletes them at any moment.
+const isTemp = (f) => /\.(part|ytdl|temp)$|\.part-Frag\d+/.test(f);
 export function listFiles(job) {
-  return fs.existsSync(job.dir)
-    ? fs.readdirSync(job.dir).filter((f) => f !== META && !f.startsWith('.') && !f.endsWith('.part'))
-        .map((f) => ({ name: f, url: `/files/${job.id}/${encodeURIComponent(f)}`, size: fs.statSync(path.join(job.dir, f)).size }))
-    : [];
+  let names;
+  try { names = fs.readdirSync(job.dir); } catch { return []; }
+  const out = [];
+  for (const f of names) {
+    if (f === META || f.startsWith('.') || isTemp(f)) continue;
+    try { out.push({ name: f, url: `/files/${job.id}/${encodeURIComponent(f)}`, size: fs.statSync(path.join(job.dir, f)).size }); }
+    catch { /* file vanished between readdir and stat */ }
+  }
+  return out;
 }
 
 export const pub = (j) => ({

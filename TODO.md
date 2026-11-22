@@ -19,7 +19,7 @@
 - [x] Deteção de codecs/encoders em falta no FFmpeg, com explicação e como obter
 - [x] Converter para formato compatível (H.264 + AAC) quando o vídeo não abre em todo o lado
 - [x] Abrir ficheiro local (formatos desconhecidos)
-- [x] Playlists (testadas só até à fase de erro de playlist inexistente; falta um teste com playlist real)
+- [x] Playlists (testadas com uma playlist real: canal Blender Open Movies, 2 vídeos; limite de vídeos à escolha)
 - [x] Escolha do modelo Whisper (tiny, base, small, medium, large-v3-turbo) + descarregar modelos
 - [x] Tradução para inglês (Whisper)
 - [x] Legendas palavra a palavra (karaoke) + estilos no Remotion
