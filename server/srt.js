@@ -12,3 +12,17 @@ export function parseSrt(srt) {
     return { start: toSec(a), end: toSec(b), text: lines.slice(i + 1).join(' ').trim() };
   }).filter(Boolean);
 }
+
+// Group one-word cues into short caption chunks (for karaoke style): max 4 words, split on pauses.
+export function groupWords(words, maxWords = 4, gap = 0.8) {
+  const chunks = [];
+  let cur = [];
+  const flush = () => { if (cur.length) { chunks.push({ start: cur[0].start, end: cur[cur.length - 1].end, text: cur.map((w) => w.text).join(' '), words: cur }); cur = []; } };
+  for (const w of words) {
+    if (!w.text) continue;
+    if (cur.length && (w.start - cur[cur.length - 1].end > gap || cur.length >= maxWords)) flush();
+    cur.push(w);
+  }
+  flush();
+  return chunks;
+}

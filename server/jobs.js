@@ -12,7 +12,7 @@ const waiting = []; // queued tasks
 let active = 0;
 
 const META = 'job.json';
-const PERSISTED = ['id', 'kind', 'title', 'url', 'status', 'stage', 'progress', 'error', 'createdAt'];
+const PERSISTED = ['id', 'kind', 'title', 'url', 'status', 'stage', 'progress', 'error', 'errorDetail', 'createdAt'];
 
 export function listFiles(job) {
   return fs.existsSync(job.dir)
@@ -23,7 +23,7 @@ export function listFiles(job) {
 
 export const pub = (j) => ({
   id: j.id, kind: j.kind, title: j.title, url: j.url, status: j.status, stage: j.stage, progress: j.progress,
-  error: j.error, createdAt: j.createdAt, files: j.status === 'deleted' ? [] : listFiles(j),
+  error: j.error, errorDetail: j.errorDetail, createdAt: j.createdAt, files: j.status === 'deleted' ? [] : listFiles(j),
   queuePosition: j.status === 'queued' ? waiting.findIndex((w) => w.job === j) + 1 : 0,
 });
 
@@ -87,7 +87,7 @@ async function start(job, fn) {
   active++;
   const ac = new AbortController();
   job.abort = ac;
-  update(job, { status: 'running', error: null });
+  update(job, { status: 'running', error: null, errorDetail: null });
   try {
     const stage = await fn(ac.signal);
     if (job.status === 'running') update(job, { status: 'done', stage: stage || job.stage, progress: 100 });
@@ -103,7 +103,7 @@ async function start(job, fn) {
 export function enqueue(job, fn) {
   return new Promise((resolve) => {
     waiting.push({ job, fn, resolve });
-    update(job, { status: 'queued', stage: 'na fila', error: null });
+    update(job, { status: 'queued', stage: 'na fila', error: null, errorDetail: null });
     pump();
   });
 }
