@@ -6,6 +6,7 @@ Web app local (macOS + Windows) que junta **yt-dlp** (download), **FFmpeg** (con
 npm install
 npm run doctor   # verifica e diz como instalar o que falta
 npm start        # http://localhost:3777
+npm test         # testes automáticos
 ```
 
 ## Estrutura
@@ -19,3 +20,14 @@ npm start        # http://localhost:3777
 
 ## Rumo à extensão de browser
 A UI chama apenas `/api/*`. Numa extensão (Chrome/Edge/Brave/Firefox, depois Safari) o service worker fala com este servidor local via Native Messaging ou `fetch` a `127.0.0.1`.
+
+## Funcionalidades
+- Download de vídeo (MP4, qualidade à escolha), só áudio (MP3) e playlists (máx. 100)
+- Fila: máx. **5 tarefas em paralelo** (plano gratuito, `server/plans.js`); cancelar; trabalhos guardados em disco
+- **Nada é apagado automaticamente**: o utilizador apaga cada trabalho se quiser
+- **Leitor de codecs**: explica o formato, diz se o FFmpeg o consegue ler e se abre nos browsers; converte para H.264+AAC; abre ficheiros locais
+- Transcrição Whisper com escolha de modelo (descarregáveis na app), tradução para inglês, palavra a palavra
+- Legendas: FFmpeg (ou faixa ativável se faltar libass) e Remotion (clássico, negrito, karaoke)
+- Erros em linguagem simples, com detalhes técnicos à parte
+
+Roteiro e decisões: ver [TODO.md](TODO.md).

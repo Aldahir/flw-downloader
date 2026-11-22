@@ -9,21 +9,21 @@
 - Extensão de browser (Chrome, Edge, Brave, Firefox, Safari): só depois.
 - **Commit depois de cada atualização.**
 
-## Em desenvolvimento (esta fase)
-- [ ] Persistência dos jobs em disco (sobrevivem a reinícios)
-- [ ] Fila com limite de paralelismo (5) e posição na fila
-- [ ] Cancelar tarefas
-- [ ] Apagar job/ficheiros (decisão do utilizador)
-- [ ] Mensagens de erro em linguagem simples, com sugestão do que fazer
-- [ ] Leitor de codecs (ffprobe): contentor, vídeo, áudio, legendas, compatibilidade com browsers
-- [ ] Deteção de codecs/encoders em falta no FFmpeg, com explicação e como obter
-- [ ] Converter para formato compatível (H.264 + AAC) quando o vídeo não abre em todo o lado
-- [ ] Abrir ficheiro local (formatos desconhecidos)
-- [ ] Playlists
-- [ ] Escolha do modelo Whisper (tiny, base, small, medium, large-v3-turbo) + descarregar modelos
-- [ ] Tradução para inglês (Whisper)
-- [ ] Legendas palavra a palavra (karaoke) + estilos no Remotion
-- [ ] Testes automáticos (node:test) e verificação e2e (MP3, qualidade)
+## Concluído nesta fase
+- [x] Persistência dos jobs em disco (sobrevivem a reinícios)
+- [x] Fila com limite de paralelismo (5) e posição na fila
+- [x] Cancelar tarefas
+- [x] Apagar job/ficheiros (decisão do utilizador)
+- [x] Mensagens de erro em linguagem simples, com sugestão do que fazer
+- [x] Leitor de codecs (ffprobe): contentor, vídeo, áudio, legendas, compatibilidade com browsers
+- [x] Deteção de codecs/encoders em falta no FFmpeg, com explicação e como obter
+- [x] Converter para formato compatível (H.264 + AAC) quando o vídeo não abre em todo o lado
+- [x] Abrir ficheiro local (formatos desconhecidos)
+- [x] Playlists (testadas só até à fase de erro de playlist inexistente; falta um teste com playlist real)
+- [x] Escolha do modelo Whisper (tiny, base, small, medium, large-v3-turbo) + descarregar modelos
+- [x] Tradução para inglês (Whisper)
+- [x] Legendas palavra a palavra (karaoke) + estilos no Remotion
+- [x] Testes automáticos (node:test) e verificação e2e (MP3, qualidade)
 
 ## Depois
 - [ ] Testar e ajustar no Windows
