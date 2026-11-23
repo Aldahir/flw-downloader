@@ -66,3 +66,15 @@ test('listing files ignores yt-dlp temp files and survives files that vanish', (
   fs.rmSync(j.dir, { recursive: true });
   assert.deepEqual(jobs.listFiles(j), []); // dir gone: no crash
 });
+
+const { canAccess, ownerId } = jobs;
+test('jobs are only visible to the account that owns them', () => {
+  const mine = { id: 'a', kind: 'download', userId: 'u1' }, anon = { id: 'b', kind: 'download', userId: null }, model = { id: 'c', kind: 'model' };
+  assert.equal(canAccess(mine, { id: 'u1' }), true);
+  assert.equal(canAccess(mine, { id: 'u2' }), false);
+  assert.equal(canAccess(mine, null), false);
+  assert.equal(canAccess(anon, null), true);
+  assert.equal(canAccess(anon, { id: 'u1' }), false);
+  assert.equal(canAccess(model, { id: 'u9' }), true);
+  assert.equal(ownerId(null), null);
+});

@@ -9,7 +9,10 @@ import { friendly } from './errors.js';
 import { videoFormatArgs } from './formats.js';
 import { listModels, resolveModel, downloadModel, CATALOGUE } from './models.js';
 import { capabilities, capabilitySummary, probe, analyze, transcode } from './codec.js';
-import { DOWNLOADS, newJob, getJob, allJobs, enqueue, cancel, remove, update, subscribe, listFiles, pub, loadFromDisk, stats } from './jobs.js';
+import { DOWNLOADS, newJob, getJob, allJobs, enqueue, cancel, remove, update, subscribe, listFiles, pub, loadFromDisk, stats, canAccess, ownerId, claimUnowned } from './jobs.js';
+import { PLATFORMS, platformOf } from './platforms.js';
+import { parseProgress } from './progress.js';
+import { createAuth, AuthError, tokenFromRequest, setCookie, clearCookie } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -19,8 +22,18 @@ const tools = () => resolveTools(); // re-resolve so installs are picked up with
 
 fs.mkdirSync(DOWNLOADS, { recursive: true });
 loadFromDisk();
+const auth = createAuth(path.resolve(process.env.FLW_DATA || 'data'));
 
 const app = express();
+app.disable('x-powered-by');
+// Cookies are sent automatically by browsers, so refuse writes that come from another site.
+app.use((req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const origin = req.headers.origin;
+  if (origin) { try { if (new URL(origin).host !== req.headers.host) return res.status(403).json({ error: 'Pedido recusado (origem diferente).' }); } catch { return res.status(403).json({ error: 'Pedido recusado.' }); } }
+  next();
+});
+app.use((req, _res, next) => { req.token = tokenFromRequest(req); req.user = auth.userFromToken(req.token); next(); });
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(ROOT, 'web')));
 app.use('/files', express.static(DOWNLOADS));
@@ -44,9 +57,24 @@ function pickMedia(job, wanted) {
 }
 function jobOr404(req, res) {
   const job = getJob(req.params.id || req.body?.id);
-  if (!job) { res.status(404).json({ error: 'Esse trabalho já não existe.' }); return null; }
+  if (!job || !canAccess(job, req.user)) { res.status(404).json({ error: 'Esse trabalho já não existe.' }); return null; }
   return job;
 }
+
+// ---- accounts (optional: without one, jobs belong to "nobody logged in") ----
+const authFail = (res, e) => res.status(e instanceof AuthError ? e.status : 500).json({ error: e instanceof AuthError ? e.message : 'Não foi possível concluir. Tenta de novo.' });
+app.get('/api/auth/me', (req, res) => res.json({ user: req.user, platforms: PLATFORMS.map(({ id, label }) => ({ id, label })) }));
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { user, token, first } = await auth.register(req.body || {});
+    if (first) claimUnowned(user.id);
+    setCookie(res, token); res.json({ user, adopted: first });
+  } catch (e) { authFail(res, e); }
+});
+app.post('/api/auth/login', async (req, res) => {
+  try { const { user, token } = await auth.login(req.body || {}); setCookie(res, token); res.json({ user }); } catch (e) { authFail(res, e); }
+});
+app.post('/api/auth/logout', (req, res) => { auth.logout(req.token); clearCookie(res); res.json({ ok: true }); });
 
 app.get('/api/capabilities', async (_req, res) => {
   const t = tools();
@@ -91,7 +119,7 @@ app.post('/api/upload', (req, res) => {
   const raw = String(req.query.name || 'ficheiro');
   const name = path.basename(raw).replace(/[^\w.\- ()\[\]]+/g, '_').slice(0, 120) || 'ficheiro';
   if (!MEDIA_RE.test(name)) return res.status(400).json({ error: 'Tipo de ficheiro não suportado (usa vídeo ou áudio).' });
-  const job = newJob({ kind: 'import', title: name, url: '' });
+  const job = newJob({ kind: 'import', title: name, url: '', userId: ownerId(req.user) });
   const out = fs.createWriteStream(path.join(job.dir, name));
   req.pipe(out);
   out.on('finish', () => { update(job, { status: 'done', stage: 'ficheiro aberto', progress: 100 }); res.json({ id: job.id }); });
@@ -125,11 +153,11 @@ app.post('/api/download', (req, res) => {
   const limit = Math.min(MAX_PLAYLIST, Math.max(1, Math.floor(Number(req.body?.limit)) || MAX_PLAYLIST)); // user-chosen number of videos
   if (!validUrl(url)) return res.status(400).json({ error: 'Link inválido.' });
   const t = need(res, 'ytdlp', 'ffmpeg'); if (!t) return;
-  const job = newJob({ url, title: typeof title === 'string' && title ? title.slice(0, 200) : url });
+  const job = newJob({ url, title: typeof title === 'string' && title ? title.slice(0, 200) : url, platform: platformOf(url), userId: ownerId(req.user) });
   res.json({ id: job.id });
 
   const args = ['--newline', '--ffmpeg-location', path.dirname(t.ffmpeg), '--restrict-filenames',
-    '--progress-template', 'PROGRESS %(progress._percent_str)s|%(info.playlist_index)s|%(info.n_entries)s',
+    '--progress-template', 'PROGRESS %(progress._percent_str)s|%(info.playlist_index)s|%(info.n_entries)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._downloaded_bytes_str)s|%(progress._total_bytes_str)s|%(progress._total_bytes_estimate_str)s',
     '--progress', '--print', 'before_dl:TITLE %(title)s']; // --print implies quiet; --progress keeps the progress lines
   if (playlist) args.push('--yes-playlist', '--playlist-end', String(limit), '--ignore-errors',
     '-o', '%(playlist_index)03d - %(title).70B [%(id)s].%(ext)s');
@@ -146,11 +174,11 @@ app.post('/api/download', (req, res) => {
     return run(t.ytdlp, args, {
       cwd: job.dir, signal,
       onLine: (l) => {
-        const m = l.match(/PROGRESS\s+([\d.]+)%\|(\w+)\|(\w+)/);
-        if (m) {
-          const pct = Number(m[1]), idx = Number(m[2]), n = Number(m[3]);
-          if (playlist && idx && n) update(job, { progress: ((idx - 1 + pct / 100) / n) * 100, stage: `a descarregar ${idx}/${n}` });
-          else update(job, { progress: pct });
+        const p = parseProgress(l);
+        if (p) {
+          const extra = { speed: p.speed, eta: p.eta, sizeText: p.sizeText };
+          if (playlist && p.idx && p.n) update(job, { ...extra, progress: ((p.idx - 1 + p.pct / 100) / p.n) * 100, stage: `a descarregar ${p.idx}/${p.n}` });
+          else update(job, { ...extra, progress: p.pct });
         }
         const ti = l.match(/^TITLE (.+)/); if (ti && !playlist) update(job, { title: ti[1] });
       },
@@ -270,14 +298,14 @@ app.post('/api/remotion', (req, res) => {
 });
 
 // ---- job management ----
-app.get('/api/jobs', (_req, res) => res.json(allJobs()));
+app.get('/api/jobs', (req, res) => res.json(allJobs(req.user)));
 app.get('/api/jobs/:id', (req, res) => { const j = jobOr404(req, res); if (j) res.json(pub(j)); });
 app.post('/api/jobs/:id/cancel', (req, res) => { const j = jobOr404(req, res); if (j) res.json({ cancelled: cancel(j) }); });
 // Deleting is always the user's explicit choice; nothing is ever cleaned up automatically.
 app.delete('/api/jobs/:id', (req, res) => { const j = jobOr404(req, res); if (j) { remove(j); res.json({ ok: true }); } });
 app.get('/api/jobs/:id/events', (req, res) => {
   const job = getJob(req.params.id);
-  if (!job) return res.sendStatus(404);
+  if (!job || !canAccess(job, req.user)) return res.sendStatus(404);
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   subscribe(job, res);
 });

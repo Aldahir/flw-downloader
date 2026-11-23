@@ -12,7 +12,7 @@ const waiting = []; // queued tasks
 let active = 0;
 
 const META = 'job.json';
-const PERSISTED = ['id', 'kind', 'title', 'url', 'status', 'stage', 'progress', 'error', 'errorDetail', 'createdAt'];
+const PERSISTED = ['id', 'kind', 'title', 'url', 'status', 'stage', 'progress', 'error', 'errorDetail', 'createdAt', 'platform', 'userId'];
 
 // yt-dlp keeps temp files while downloading (.part, .ytdl, .part-FragN, .temp) and deletes them at any moment.
 const isTemp = (f) => /\.(part|ytdl|temp)$|\.part-Frag\d+/.test(f);
@@ -32,7 +32,12 @@ export const pub = (j) => ({
   id: j.id, kind: j.kind, title: j.title, url: j.url, status: j.status, stage: j.stage, progress: j.progress,
   error: j.error, errorDetail: j.errorDetail, createdAt: j.createdAt, files: j.status === 'deleted' ? [] : listFiles(j),
   queuePosition: j.status === 'queued' ? waiting.findIndex((w) => w.job === j) + 1 : 0,
+  platform: j.platform || 'other', speed: j.speed || '', eta: j.eta || '', sizeText: j.sizeText || '',
 });
+
+// Jobs belong to the account that created them (null = nobody logged in). Model downloads are shared.
+export const ownerId = (user) => (user ? user.id : null);
+export const canAccess = (job, user) => job.kind === 'model' || (job.userId ?? null) === ownerId(user);
 
 function persist(job) {
   if (job.kind === 'model') return;
@@ -78,7 +83,11 @@ export function newJob(extra = {}) {
   return job;
 }
 export const getJob = (id) => jobs.get(id);
-export const allJobs = () => [...jobs.values()].filter((j) => j.kind !== 'model').sort((a, b) => b.createdAt - a.createdAt).map(pub);
+// The first account created on this computer inherits the jobs made before accounts existed.
+export function claimUnowned(userId) {
+  for (const j of jobs.values()) if (j.kind !== 'model' && !j.userId) { j.userId = userId; persist(j); }
+}
+export const allJobs = (user) => [...jobs.values()].filter((j) => j.kind !== 'model' && canAccess(j, user)).sort((a, b) => b.createdAt - a.createdAt).map(pub);
 
 // ---- queue ----
 function pump() {
@@ -97,7 +106,7 @@ async function start(job, fn) {
   update(job, { status: 'running', error: null, errorDetail: null });
   try {
     const stage = await fn(ac.signal);
-    if (job.status === 'running') update(job, { status: 'done', stage: stage || job.stage, progress: 100 });
+    if (job.status === 'running') update(job, { status: 'done', stage: stage || job.stage, progress: 100, speed: '', eta: '', sizeText: '' });
   } catch (e) {
     if (ac.signal.aborted) update(job, { status: 'cancelled', stage: 'cancelado' });
     else { const f = friendly(e); update(job, { status: 'error', stage: 'erro', error: f.hint ? `${f.message} ${f.hint}` : f.message, errorDetail: f.raw }); }
