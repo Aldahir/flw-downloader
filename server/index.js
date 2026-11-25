@@ -6,13 +6,25 @@ import { resolveTools } from './tools.js';
 import { run } from './run.js';
 import { parseSrt, groupWords } from './srt.js';
 import { friendly } from './errors.js';
-import { videoFormatArgs } from './formats.js';
+import { videoFormatArgs, qualitiesFrom } from './formats.js';
 import { listModels, resolveModel, downloadModel, CATALOGUE } from './models.js';
-import { capabilities, capabilitySummary, probe, analyze, transcode } from './codec.js';
-import { DOWNLOADS, newJob, getJob, allJobs, enqueue, cancel, remove, update, subscribe, listFiles, pub, loadFromDisk, stats, canAccess, ownerId, claimUnowned } from './jobs.js';
+import { DOWNLOADS, setJobSink, allJobObjects, newJob, getJob, allJobs, enqueue, cancel, remove, update, subscribe, listFiles, pub, loadFromDisk, stats, canAccess, ownerId, claimUnowned, disownJobs, removeOwned, usedBytes, startExpirySweeper } from './jobs.js';
 import { PLATFORMS, platformOf } from './platforms.js';
 import { parseProgress } from './progress.js';
-import { createAuth, AuthError, tokenFromRequest, setCookie, clearCookie } from './auth.js';
+import { createV1 } from './api-v1.js';
+import { openapi } from './openapi.js';
+import { createKeys } from './api-keys.js';
+import { createAuth, tokenFromRequest, COOKIE_BROWSERS } from './auth.js';
+import { createPool, migrate, dbReachable } from './db.js';
+import { createJobsDb } from './jobs-db.js';
+import { createQrDynamic } from './qr-dynamic.js';
+import { createAvatars } from './avatar.js';
+import { createMailer } from './mailer.js';
+import { createPayments } from './payments.js';
+import { accountRoutes } from './routes-account.js';
+import { billingRoutes } from './routes-billing.js';
+import { PLANS } from './plans.js';
+import { QuotaError } from './errors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -22,7 +34,22 @@ const tools = () => resolveTools(); // re-resolve so installs are picked up with
 
 fs.mkdirSync(DOWNLOADS, { recursive: true });
 loadFromDisk();
-const auth = createAuth(path.resolve(process.env.FLW_DATA || 'data'));
+const pool = createPool();
+if (!(await dbReachable(pool))) {
+  console.error('\nNão consegui ligar ao MySQL. Corre "npm run db:setup" (instala e prepara a base de dados) ou confirma o ficheiro .env.\n');
+  process.exit(1);
+}
+await migrate(pool);
+const auth = createAuth(pool);
+const keys = createKeys(pool, { planLimitsFor: (userId) => auth.planLimits(userId) });
+const qrs = createQrDynamic(pool), jobsDb = createJobsDb(pool);
+const mailer = createMailer(pool);
+const UPLOADS = path.resolve(process.env.FLW_UPLOADS || 'uploads');
+const avatars = createAvatars(path.join(UPLOADS, 'avatars'));
+const payments = createPayments(pool, path.join(UPLOADS, 'payment-proofs'));
+setJobSink((j) => jobsDb.record(j), (id) => jobsDb.forget(id));
+allJobObjects().forEach((j) => jobsDb.record(j)); // history of jobs that existed before the database
+startExpirySweeper();
 
 const app = express();
 app.disable('x-powered-by');
@@ -33,10 +60,24 @@ app.use((req, res, next) => {
   if (origin) { try { if (new URL(origin).host !== req.headers.host) return res.status(403).json({ error: 'Pedido recusado (origem diferente).' }); } catch { return res.status(403).json({ error: 'Pedido recusado.' }); } }
   next();
 });
-app.use((req, _res, next) => { req.token = tokenFromRequest(req); req.user = auth.userFromToken(req.token); next(); });
+app.use(async (req, _res, next) => {
+  try { req.token = tokenFromRequest(req); req.user = await auth.userFromToken(req.token); } catch (e) { console.error(e); req.user = null; }
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(ROOT, 'web')));
 app.use('/files', express.static(DOWNLOADS));
+// Profile photos keep the same file name when replaced, so make browsers re-check instead of showing the old one.
+app.use('/uploads', express.static(UPLOADS, { setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
+// Libraries that run in the browser (QR codes, video player codecs). Served from node_modules; nothing is stored per user.
+const nm = (...p) => path.join(ROOT, 'node_modules', ...p);
+app.get('/vendor/qrcode.mjs', (_req, res) => res.sendFile(nm('qrcode-generator', 'dist', 'qrcode.mjs')));
+app.use('/vendor/ffmpeg', express.static(nm('@ffmpeg', 'ffmpeg', 'dist', 'esm')));
+app.use('/vendor/ffmpeg-core', express.static(nm('@ffmpeg', 'core', 'dist', 'esm')));
+app.get('/vendor/jsqr.js', (_req, res) => res.sendFile(nm('jsqr', 'dist', 'jsQR.js')));
+app.get('/vendor/pdf.mjs', (_req, res) => res.sendFile(nm('pdfjs-dist', 'build', 'pdf.min.mjs')));
+app.get('/vendor/pdf.worker.mjs', (_req, res) => res.sendFile(nm('pdfjs-dist', 'build', 'pdf.worker.min.mjs')));
+app.get('/vendor/jszip.js', (_req, res) => res.sendFile(nm('jszip', 'dist', 'jszip.min.js')));
 
 const validUrl = (u) => { try { const p = new URL(u); return p.protocol === 'http:' || p.protocol === 'https:'; } catch { return false; } };
 const fail = (res, e, code = 500) => { const f = friendly(e); res.status(code).json({ error: f.hint ? `${f.message} ${f.hint}` : f.message, detail: f.raw }); };
@@ -61,72 +102,11 @@ function jobOr404(req, res) {
   return job;
 }
 
-// ---- accounts (optional: without one, jobs belong to "nobody logged in") ----
-const authFail = (res, e) => res.status(e instanceof AuthError ? e.status : 500).json({ error: e instanceof AuthError ? e.message : 'Não foi possível concluir. Tenta de novo.' });
-app.get('/api/auth/me', (req, res) => res.json({ user: req.user, platforms: PLATFORMS.map(({ id, label }) => ({ id, label })) }));
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { user, token, first } = await auth.register(req.body || {});
-    if (first) claimUnowned(user.id);
-    setCookie(res, token); res.json({ user, adopted: first });
-  } catch (e) { authFail(res, e); }
-});
-app.post('/api/auth/login', async (req, res) => {
-  try { const { user, token } = await auth.login(req.body || {}); setCookie(res, token); res.json({ user }); } catch (e) { authFail(res, e); }
-});
-app.post('/api/auth/logout', (req, res) => { auth.logout(req.token); clearCookie(res); res.json({ ok: true }); });
+accountRoutes(app, { auth, keys, qrs, jobsDb, avatars, claimUnowned, disownJobs, removeOwned, mailer });
+billingRoutes(app, { pool, payments, mailer });
 
-app.get('/api/capabilities', async (_req, res) => {
-  const t = tools();
-  if (!t.ffmpeg) return res.status(424).json({ error: 'FFmpeg não está instalado.' });
-  try { res.json(capabilitySummary(await capabilities(t.ffmpeg))); } catch (e) { fail(res, e); }
-});
-
-// Codec reader: what is inside this file, can this FFmpeg read it, will browsers play it?
-app.post('/api/probe', async (req, res) => {
-  const job = jobOr404(req, res); if (!job) return;
-  const t = need(res, 'ffprobe', 'ffmpeg'); if (!t) return;
-  const src = pickMedia(job, req.body?.file);
-  if (!src) return res.status(400).json({ error: 'Não há vídeo ou áudio neste trabalho.' });
-  try {
-    const cap = await capabilities(t.ffmpeg);
-    const info = await probe(t.ffprobe, path.join(job.dir, src));
-    const { encoder, ...analysis } = analyze(info, cap);
-    res.json({ file: src, ...info, ...analysis, encoder });
-  } catch (e) { fail(res, e); }
-});
-
-app.post('/api/transcode', async (req, res) => {
-  const job = jobOr404(req, res); if (!job) return;
-  const t = need(res, 'ffprobe', 'ffmpeg'); if (!t) return;
-  const src = pickMedia(job, req.body?.file);
-  if (!src) return res.status(400).json({ error: 'Não há vídeo ou áudio neste trabalho.' });
-  let info, cap;
-  try { cap = await capabilities(t.ffmpeg); info = await probe(t.ffprobe, path.join(job.dir, src)); } catch (e) { return fail(res, e); }
-  const a = analyze(info, cap);
-  if (a.missing.length) return res.status(424).json({ error: `${a.missing[0].explain} ${a.missing[0].how}` });
-  res.json({ ok: true });
-  enqueue(job, async (signal) => {
-    update(job, { stage: 'a converter para formato compatível', progress: 0 });
-    await transcode({ ffmpeg: t.ffmpeg, cap, src, cwd: job.dir, hasVideo: !!info.video, duration: info.duration, signal,
-      onProgress: (p) => update(job, { progress: Math.round(p) }) });
-    return 'convertido';
-  });
-});
-
-// Open a local file (e.g. an unknown format) as a job so it can be inspected, converted and transcribed.
-app.post('/api/upload', (req, res) => {
-  const raw = String(req.query.name || 'ficheiro');
-  const name = path.basename(raw).replace(/[^\w.\- ()\[\]]+/g, '_').slice(0, 120) || 'ficheiro';
-  if (!MEDIA_RE.test(name)) return res.status(400).json({ error: 'Tipo de ficheiro não suportado (usa vídeo ou áudio).' });
-  const job = newJob({ kind: 'import', title: name, url: '', userId: ownerId(req.user) });
-  const out = fs.createWriteStream(path.join(job.dir, name));
-  req.pipe(out);
-  out.on('finish', () => { update(job, { status: 'done', stage: 'ficheiro aberto', progress: 100 }); res.json({ id: job.id }); });
-  out.on('error', (e) => { remove(job); fail(res, e); });
-  req.on('aborted', () => { out.destroy(); remove(job); });
-});
-
+app.get('/api/v1/openapi.json', (req, res) => res.json(openapi(`${req.protocol}://${req.get('host')}`)));
+app.use('/api/v1', createV1({ keys, tools, startDownload, validUrl, getJob, remove, pub, listFiles, canAccessKey: (job, rec) => job.kind !== 'model' && job.userId === rec.userId }));
 app.get('/api/health', (_req, res) => res.json({ ...tools(), ...stats() }));
 
 app.post('/api/info', async (req, res) => {
@@ -136,26 +116,32 @@ app.post('/api/info', async (req, res) => {
   const u = new URL(url);
   const looksLikePlaylist = u.searchParams.has('list') || /\/playlist|\/sets\//.test(u.pathname);
   try {
-    const out = await run(t.ytdlp, playlist ? ['-J', '--flat-playlist', '--', url] : ['-J', '--no-playlist', '--', url]);
+    const cb = req.user ? (await auth.settings(req.user.id)).cookiesBrowser : '';
+    const out = await run(t.ytdlp, [...(COOKIE_BROWSERS.includes(cb) ? ['--cookies-from-browser', cb] : []), ...(playlist ? ['-J', '--flat-playlist', '--', url] : ['-J', '--no-playlist', '--', url])]);
     const j = JSON.parse(out);
     if (j._type === 'playlist') {
       const entries = (j.entries || []).filter(Boolean);
-      return res.json({ playlist: { title: j.title, count: entries.length, capped: entries.length > MAX_PLAYLIST,
+      return res.json({ platform: platformOf(url), playlist: { title: j.title, count: entries.length, capped: entries.length > MAX_PLAYLIST,
         entries: entries.slice(0, MAX_PLAYLIST).map((e) => ({ id: e.id, title: e.title, duration: e.duration })) }, looksLikePlaylist });
     }
     const heights = [...new Set((j.formats || []).map((f) => f.height).filter(Boolean))].sort((a, b) => b - a);
-    res.json({ title: j.title, thumbnail: j.thumbnail, duration: j.duration, uploader: j.uploader, heights, looksLikePlaylist });
+    res.json({ title: j.title, thumbnail: j.thumbnail, duration: j.duration, uploader: j.uploader, heights, qualities: qualitiesFrom(j.formats), platform: platformOf(url), looksLikePlaylist });
   } catch (e) { fail(res, e); }
 });
 
-app.post('/api/download', (req, res) => {
-  const { url, kind = 'video', height, playlist = false, title } = req.body || {};
-  const limit = Math.min(MAX_PLAYLIST, Math.max(1, Math.floor(Number(req.body?.limit)) || MAX_PLAYLIST)); // user-chosen number of videos
-  if (!validUrl(url)) return res.status(400).json({ error: 'Link inválido.' });
-  const t = need(res, 'ytdlp', 'ffmpeg'); if (!t) return;
-  const job = newJob({ url, title: typeof title === 'string' && title ? title.slice(0, 200) : url, platform: platformOf(url), userId: ownerId(req.user) });
-  res.json({ id: job.id });
-
+// Creates the job and queues the yt-dlp run. Shared by the web app (/api/download) and the public API (/api/v1/videos).
+// Logged-in accounts get their plan's storage quota, retention and queue priority; anyone else
+// (no account) gets the free plan's retention with no storage quota (there is no reliable identity
+// to track usage against between anonymous visits).
+async function startDownload(t, { url, kind = 'video', height, playlist = false, title, limit = MAX_PLAYLIST, userId = null, cookiesBrowser = '' }) {
+  let ttlMinutes = PLANS.free.ttlMinutes, priority = false;
+  if (userId) {
+    const limits = await auth.planLimits(userId);
+    ttlMinutes = limits.ttlMinutes; priority = limits.priority;
+    const quotaBytes = limits.storageMB * 1024 * 1024; const used = usedBytes(userId);
+    if (used >= quotaBytes) throw new QuotaError(`Estás sem espaço (${Math.round(used / (1024 * 1024))} de ${limits.storageMB} MB usados). Apaga trabalhos antigos para libertar espaço, ou atualiza para o Pro.`);
+  }
+  const job = newJob({ url, title: typeof title === 'string' && title ? title.slice(0, 200) : url, platform: platformOf(url), userId, ttlMinutes, priority });
   const args = ['--newline', '--ffmpeg-location', path.dirname(t.ffmpeg), '--restrict-filenames',
     '--progress-template', 'PROGRESS %(progress._percent_str)s|%(info.playlist_index)s|%(info.n_entries)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._downloaded_bytes_str)s|%(progress._total_bytes_str)s|%(progress._total_bytes_estimate_str)s',
     '--progress', '--print', 'before_dl:TITLE %(title)s']; // --print implies quiet; --progress keeps the progress lines
@@ -163,10 +149,8 @@ app.post('/api/download', (req, res) => {
     '-o', '%(playlist_index)03d - %(title).70B [%(id)s].%(ext)s');
   else args.push('--no-playlist', '-o', '%(title).80B [%(id)s].%(ext)s');
   if (kind === 'audio') args.push('-x', '--audio-format', 'mp3');
-  else {
-    const h = Number(height);
-    args.push(...videoFormatArgs(h), '--merge-output-format', 'mp4');
-  }
+  else args.push(...videoFormatArgs(Number(height)), '--merge-output-format', 'mp4');
+  if (COOKIE_BROWSERS.includes(cookiesBrowser)) args.unshift('--cookies-from-browser', cookiesBrowser); // opt-in, read locally by yt-dlp
   args.push('--', url);
 
   enqueue(job, (signal) => {
@@ -184,6 +168,17 @@ app.post('/api/download', (req, res) => {
       },
     }).then(() => 'descarregado');
   });
+  return job;
+}
+
+app.post('/api/download', async (req, res) => {
+  const { url, kind = 'video', height, playlist = false, title } = req.body || {};
+  const limit = Math.min(MAX_PLAYLIST, Math.max(1, Math.floor(Number(req.body?.limit)) || MAX_PLAYLIST)); // user-chosen number of videos
+  if (!validUrl(url)) return res.status(400).json({ error: 'Link inválido.' });
+  const t = need(res, 'ytdlp', 'ffmpeg'); if (!t) return;
+  const cookiesBrowser = req.user ? (await auth.settings(req.user.id)).cookiesBrowser : '';
+  try { const job = await startDownload(t, { url, kind, height, playlist, title, limit, userId: ownerId(req.user), cookiesBrowser }); res.json({ id: job.id }); }
+  catch (e) { if (e instanceof QuotaError) return res.status(e.status).json({ error: e.message, upgrade: true }); throw e; }
 });
 
 app.get('/api/models', (_req, res) => res.json(listModels()));

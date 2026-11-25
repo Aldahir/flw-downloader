@@ -1,7 +1,7 @@
 // Turn raw tool errors into plain-language messages with a suggestion.
 const RULES = [
-  [/Private video|This video is private/i, 'Este vídeo é privado.', 'Só o dono pode vê-lo. Se tens acesso, tens de iniciar sessão no site (suporte a cookies ainda por implementar).'],
-  [/Sign in to confirm|confirm you.re not a bot|login required|requires? (a )?login/i, 'O site pede início de sessão ou verificação.', 'Tenta mais tarde ou noutro link. Suporte a cookies do browser está previsto.'],
+  [/Private video|This video is private/i, 'Este vídeo é privado.', 'Só quem tem acesso o consegue ver. Inicia sessão no site no teu navegador e liga os cookies dele nas Definições da conta.'],
+  [/Sign in to confirm|confirm you.re not a bot|login required|requires? (a )?login|only works when logged.?in/i, 'O site pede início de sessão ou verificação.', 'Nas Definições da conta podes ligar os cookies do teu navegador (Chrome, Firefox…) para transferir vídeos que exigem sessão iniciada.'],
   [/not available in your country|geo.?restrict|blocked it in your country/i, 'Este vídeo não está disponível na tua região.', 'Foi bloqueado geograficamente pelo site.'],
   [/Video unavailable|has been removed|no longer available|does not exist/i, 'Este vídeo já não está disponível.', 'Foi removido ou nunca existiu. Confirma o link.'],
   [/Unsupported URL/i, 'Este link não é suportado.', 'Confirma que é a página do vídeo e não a página inicial do site.'],
@@ -23,3 +23,6 @@ export function friendly(err) {
   for (const [re, message, hint] of RULES) if (re.test(raw)) return { message, hint, raw };
   return { message: 'Ocorreu um erro inesperado.', hint: 'Vê os detalhes técnicos abaixo.', raw };
 }
+
+// Thrown when an account's storage quota is full; callers show an "upgrade to Pro" link/CTA.
+export class QuotaError extends Error { constructor(message) { super(message); this.status = 403; this.upgrade = true; } }

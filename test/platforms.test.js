@@ -23,6 +23,7 @@ test('parseProgress reads percent, speed, eta and sizes', () => {
 test('parseProgress copes with unknown fields and junk', () => {
   const p = parseProgress('PROGRESS   5.0%|2|10|Unknown B/s|NA|1MiB|NA|8MiB');
   assert.equal(p.idx, 2); assert.equal(p.n, 10); assert.equal(p.speed, ''); assert.equal(p.sizeText, '1MiB de 8MiB');
+  assert.equal(parseProgress('PROGRESS 1.0%|NA|NA|N/A|N/A|128KiB|N/A|N/A').sizeText, '128KiB'); // yt-dlp prints N/A for unknown
   assert.equal(parseProgress('something else'), null);
   assert.equal(parseProgress('PROGRESS abc|1'), null);
 });

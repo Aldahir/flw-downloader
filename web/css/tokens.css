@@ -1,0 +1,29 @@
+/* Design tokens: soft light surfaces, teal action colour, yellow highlighter. Dark theme below. */
+:root {
+  --bg: #eef0f5; --surface: #ffffff; --surface-2: #f6f7fa; --ink: #1d2230; --mut: #5f687a; --line: #e3e6ee;
+  --primary: #1b8078; --primary-ink: #146b64; --on-primary: #ffffff; --bright: #2fa8a0;
+  --hl: #ffd84a; --on-hl: #1d2230; --dark: #2a2e37; --on-dark: #ffffff;
+  --ok: #16794c; --warn: #9a5b00; --bad: #c0392b; --tint-bad: #fdecea; --tint-warn: #fff4dc; --tint-ok: #e5f5ee;
+  --shadow: 0 1px 2px rgba(25, 32, 56, .04), 0 10px 30px rgba(25, 32, 56, .07);
+  --shadow-up: 0 2px 4px rgba(25, 32, 56, .05), 0 16px 36px rgba(25, 32, 56, .11);
+  --tile: transparent; --r-card: 24px; --r-ctl: 16px; --r-pill: 999px;
+  --wrap: 1120px; --gutter: clamp(16px, 4vw, 32px);
+  --font: ui-rounded, "SF Pro Rounded", "Nunito", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: #11141a; --surface: #1a1e26; --surface-2: #222733; --ink: #eceff6; --mut: #a2abbd; --line: #2c3240;
+  --primary: #35b5aa; --primary-ink: #5fd0c6; --on-primary: #08201d; --bright: #35b5aa;
+  --tile: #eef0f5; --dark: #2e3340; --ok: #5ad19a; --warn: #f5c04a; --bad: #ff8a7a; --tint-bad: #3a1f1d; --tint-warn: #382c12; --tint-ok: #15301f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px rgba(0, 0, 0, .25); --shadow-up: 0 2px 4px rgba(0, 0, 0, .35), 0 16px 36px rgba(0, 0, 0, .35);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11141a; --surface: #1a1e26; --surface-2: #222733; --ink: #eceff6; --mut: #a2abbd; --line: #2c3240;
+    --primary: #35b5aa; --primary-ink: #5fd0c6; --on-primary: #08201d; --bright: #35b5aa;
+    --tile: #eef0f5; --dark: #2e3340; --ok: #5ad19a; --warn: #f5c04a; --bad: #ff8a7a; --tint-bad: #3a1f1d; --tint-warn: #382c12; --tint-ok: #15301f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px rgba(0, 0, 0, .25); --shadow-up: 0 2px 4px rgba(0, 0, 0, .35), 0 16px 36px rgba(0, 0, 0, .35);
+    color-scheme: dark;
+  }
+}

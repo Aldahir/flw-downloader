@@ -2,17 +2,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { maxParallel } from './plans.js';
+import { GLOBAL_MAX_PARALLEL } from './plans.js';
 import { friendly } from './errors.js';
+import { platformOf } from './platforms.js';
 
-export const DOWNLOADS = path.resolve('downloads');
+export const DOWNLOADS = path.resolve(process.env.FLW_DOWNLOADS || 'downloads');
 const jobs = new Map();
 const listeners = new Map();
 const waiting = []; // queued tasks
 let active = 0;
 
 const META = 'job.json';
-const PERSISTED = ['id', 'kind', 'title', 'url', 'status', 'stage', 'progress', 'error', 'errorDetail', 'createdAt', 'platform', 'userId'];
+const PERSISTED = ['id', 'kind', 'title', 'url', 'status', 'stage', 'progress', 'error', 'errorDetail', 'createdAt', 'platform', 'userId', 'priority', 'ttlMinutes', 'expiresAt'];
 
 // yt-dlp keeps temp files while downloading (.part, .ytdl, .part-FragN, .temp) and deletes them at any moment.
 const isTemp = (f) => /\.(part|ytdl|temp)$|\.part-Frag\d+/.test(f);
@@ -30,17 +31,28 @@ export function listFiles(job) {
 
 export const pub = (j) => ({
   id: j.id, kind: j.kind, title: j.title, url: j.url, status: j.status, stage: j.stage, progress: j.progress,
-  error: j.error, errorDetail: j.errorDetail, createdAt: j.createdAt, files: j.status === 'deleted' ? [] : listFiles(j),
+  error: j.error, errorDetail: j.errorDetail, createdAt: j.createdAt, files: (j.status === 'deleted' || j.status === 'expired') ? [] : listFiles(j),
   queuePosition: j.status === 'queued' ? waiting.findIndex((w) => w.job === j) + 1 : 0,
-  platform: j.platform || 'other', speed: j.speed || '', eta: j.eta || '', sizeText: j.sizeText || '',
+  platform: j.platform || platformOf(j.url), speed: j.speed || '', eta: j.eta || '', sizeText: j.sizeText || '',
+  expiresAt: j.expiresAt || null,
 });
+// Bytes currently on disk across an account's finished (not yet expired/deleted) jobs — used to enforce the plan's storage quota.
+export const usedBytes = (userId) => [...jobs.values()].filter((j) => j.kind !== 'model' && j.userId === userId && j.status === 'done')
+  .reduce((sum, j) => sum + listFiles(j).reduce((s, f) => s + f.size, 0), 0);
 
 // Jobs belong to the account that created them (null = nobody logged in). Model downloads are shared.
 export const ownerId = (user) => (user ? user.id : null);
 export const canAccess = (job, user) => job.kind === 'model' || (job.userId ?? null) === ownerId(user);
 
+// Optional listener (the MySQL history mirror). Set once at startup; absent in unit tests.
+let sink = null;
+export const setJobSink = (fn, removed) => { sink = fn; onRemoved = removed || null; };
+let onRemoved = null;
+export const allJobObjects = () => [...jobs.values()];
+
 function persist(job) {
   if (job.kind === 'model') return;
+  try { sink?.(job); } catch { /* history is best effort */ }
   try {
     fs.mkdirSync(job.dir, { recursive: true });
     fs.writeFileSync(path.join(job.dir, META), JSON.stringify(Object.fromEntries(PERSISTED.map((k) => [k, job[k]]))));
@@ -91,7 +103,7 @@ export const allJobs = (user) => [...jobs.values()].filter((j) => j.kind !== 'mo
 
 // ---- queue ----
 function pump() {
-  while (active < maxParallel() && waiting.length) {
+  while (active < GLOBAL_MAX_PARALLEL && waiting.length) {
     const { job, fn, resolve } = waiting.shift();
     start(job, fn).then(resolve);
     waitingChanged();
@@ -106,7 +118,10 @@ async function start(job, fn) {
   update(job, { status: 'running', error: null, errorDetail: null });
   try {
     const stage = await fn(ac.signal);
-    if (job.status === 'running') update(job, { status: 'done', stage: stage || job.stage, progress: 100, speed: '', eta: '', sizeText: '' });
+    if (job.status === 'running') {
+      const expiresAt = Date.now() + (job.ttlMinutes || 60) * 60_000;
+      update(job, { status: 'done', stage: stage || job.stage, progress: 100, speed: '', eta: '', sizeText: '', expiresAt });
+    }
   } catch (e) {
     if (ac.signal.aborted) update(job, { status: 'cancelled', stage: 'cancelado' });
     else { const f = friendly(e); update(job, { status: 'error', stage: 'erro', error: f.hint ? `${f.message} ${f.hint}` : f.message, errorDetail: f.raw }); }
@@ -115,10 +130,13 @@ async function start(job, fn) {
   }
 }
 
-// Queue a task for a job. Runs now if under the plan's parallel limit.
+// Queue a task for a job. Runs now if under the global parallel cap. A job created with
+// `priority: true` (a paying account) joins the line after other priority jobs but ahead of free ones.
 export function enqueue(job, fn) {
   return new Promise((resolve) => {
-    waiting.push({ job, fn, resolve });
+    const entry = { job, fn, resolve };
+    if (job.priority) { let i = 0; while (i < waiting.length && waiting[i].job.priority) i++; waiting.splice(i, 0, entry); }
+    else waiting.push(entry);
     update(job, { status: 'queued', stage: 'na fila', error: null, errorDetail: null });
     pump();
   });
@@ -131,10 +149,15 @@ export function cancel(job) {
   return false;
 }
 
+// Account deleted: keep the files (never auto-delete) and make them visible again without an account.
+export function disownJobs(userId) { for (const j of jobs.values()) if (j.userId === userId) { j.userId = null; persist(j); } }
+export function removeOwned(userId) { for (const j of [...jobs.values()]) if (j.userId === userId) remove(j); }
+
 export function remove(job) {
   cancel(job);
   fs.rmSync(job.dir, { recursive: true, force: true });
   jobs.delete(job.id);
+  onRemoved?.(job.id);
 }
 
 export function subscribe(job, res) {
@@ -142,4 +165,19 @@ export function subscribe(job, res) {
   const arr = listeners.get(job.id) || []; arr.push(res); listeners.set(job.id, arr);
   res.on('close', () => listeners.set(job.id, (listeners.get(job.id) || []).filter((r) => r !== res)));
 }
-export const stats = () => ({ active, queued: waiting.length, maxParallel: maxParallel() });
+export const stats = () => ({ active, queued: waiting.length, maxParallel: GLOBAL_MAX_PARALLEL });
+
+// A finished job's files are deleted once its plan's validity (ttlMinutes, counted from completion) runs
+// out; the job itself stays (status 'expired') so it keeps showing in the history. Nothing is deleted while
+// it is still queued/running, and a job the user already deleted is simply gone, not "expired".
+export function sweepExpired() {
+  const now = Date.now();
+  for (const job of jobs.values()) {
+    if (job.status === 'done' && job.expiresAt && job.expiresAt <= now) {
+      fs.rmSync(job.dir, { recursive: true, force: true });
+      fs.mkdirSync(job.dir, { recursive: true });
+      update(job, { status: 'expired', stage: 'expirado (passou a validade do plano)' });
+    }
+  }
+}
+export const startExpirySweeper = (intervalMs = 60_000) => { sweepExpired(); return setInterval(sweepExpired, intervalMs); };
