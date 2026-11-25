@@ -1,0 +1,35 @@
+{
+  "name": "flw-downloader",
+  "description":"FLW Downloader é uma aplicação web que junta, numa só ferramenta, download de vídeo/áudio, transcrição por IA, legendas estilizadas e geração/leitura de códigos QR, com uma API pública para quem quiser construir por cima.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "doctor": "node scripts/doctor.js",
+    "test": "node --test --test-concurrency=1 test/",
+    "account": "node scripts/account.js",
+    "db:setup": "node scripts/db.js setup",
+    "db:status": "node scripts/db.js status"
+  },
+  "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@remotion/bundler": "4.0.250",
+    "@remotion/renderer": "4.0.250",
+    "@resvg/resvg-js": "^2.6.2",
+    "express": "^4.21.2",
+    "geoip-lite": "^2.0.3",
+    "jsqr": "^1.4.0",
+    "jszip": "^3.10.2",
+    "mysql2": "^3.24.6",
+    "nodemailer": "^10.6.1",
+    "pdfjs-dist": "^6.5.438",
+    "qrcode-generator": "^2.0.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.250",
+    "sharp": "^0.35.5"
+  }
+}

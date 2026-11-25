@@ -1,0 +1,135 @@
+CREATE TABLE users (
+  id CHAR(12) NOT NULL PRIMARY KEY,
+  name VARCHAR(60) NOT NULL,
+  email VARCHAR(200) NOT NULL UNIQUE,
+  salt CHAR(32) NOT NULL,
+  hash CHAR(128) NOT NULL,
+  avatar_url VARCHAR(255) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE sessions (
+  token_hash CHAR(64) NOT NULL PRIMARY KEY,
+  user_id CHAR(12) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  last_seen DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  expires_at DATETIME(3) NOT NULL,
+  device VARCHAR(20) NOT NULL DEFAULT 'desktop',
+  os VARCHAR(30) NOT NULL DEFAULT '',
+  browser VARCHAR(30) NOT NULL DEFAULT '',
+  ip_hash CHAR(64) NULL,
+  country CHAR(2) NULL,
+  city VARCHAR(80) NULL,
+  INDEX (user_id), INDEX (expires_at),
+  CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE login_events (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id CHAR(12) NULL,
+  email VARCHAR(200) NOT NULL,
+  ok TINYINT(1) NOT NULL,
+  at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  device VARCHAR(20) NOT NULL DEFAULT 'desktop',
+  os VARCHAR(30) NOT NULL DEFAULT '',
+  browser VARCHAR(30) NOT NULL DEFAULT '',
+  ip_hash CHAR(64) NULL,
+  country CHAR(2) NULL,
+  city VARCHAR(80) NULL,
+  INDEX (user_id, at),
+  CONSTRAINT fk_login_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE api_keys (
+  id CHAR(10) NOT NULL PRIMARY KEY,
+  user_id CHAR(12) NOT NULL,
+  name VARCHAR(40) NOT NULL,
+  hash CHAR(64) NOT NULL UNIQUE,
+  prefix VARCHAR(24) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  last_used DATETIME(3) NULL,
+  INDEX (user_id),
+  CONSTRAINT fk_keys_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE api_usage (
+  key_id CHAR(10) NOT NULL,
+  day DATE NOT NULL,
+  qr INT NOT NULL DEFAULT 0,
+  videos INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (key_id, day),
+  CONSTRAINT fk_usage_key FOREIGN KEY (key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Mirror of the job history (files stay on disk, one folder per job).
+CREATE TABLE jobs (
+  id CHAR(8) NOT NULL PRIMARY KEY,
+  user_id CHAR(12) NULL,
+  kind VARCHAR(12) NOT NULL,
+  title VARCHAR(255) NOT NULL DEFAULT '',
+  url TEXT NULL,
+  platform VARCHAR(20) NOT NULL DEFAULT 'other',
+  status VARCHAR(16) NOT NULL,
+  stage VARCHAR(120) NOT NULL DEFAULT '',
+  error TEXT NULL,
+  size_bytes BIGINT NOT NULL DEFAULT 0,
+  created_at DATETIME(3) NOT NULL,
+  finished_at DATETIME(3) NULL,
+  INDEX (user_id, created_at), INDEX (user_id, platform), INDEX (user_id, status),
+  CONSTRAINT fk_jobs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE user_settings (
+  user_id CHAR(12) NOT NULL PRIMARY KEY,
+  theme ENUM('auto','light','dark') NOT NULL DEFAULT 'auto',
+  default_kind ENUM('video','audio') NOT NULL DEFAULT 'video',
+  default_height SMALLINT NULL,
+  scan_reports TINYINT(1) NOT NULL DEFAULT 1,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT fk_settings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE subscriptions (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id CHAR(12) NOT NULL,
+  plan VARCHAR(20) NOT NULL DEFAULT 'free',
+  status ENUM('active','canceled','past_due') NOT NULL DEFAULT 'active',
+  started_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  renews_at DATETIME(3) NULL,
+  canceled_at DATETIME(3) NULL,
+  INDEX (user_id, status),
+  CONSTRAINT fk_subs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Dynamic QR codes: the code holds a short link, the destination can change, and every scan is counted.
+CREATE TABLE qr_codes (
+  id CHAR(10) NOT NULL PRIMARY KEY,
+  user_id CHAR(12) NOT NULL,
+  code CHAR(8) NOT NULL UNIQUE,
+  title VARCHAR(80) NOT NULL,
+  type VARCHAR(20) NOT NULL DEFAULT 'url',
+  target TEXT NOT NULL,
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  design JSON NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  INDEX (user_id, created_at),
+  CONSTRAINT fk_qr_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE qr_scans (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  qr_id CHAR(10) NOT NULL,
+  at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  device VARCHAR(20) NOT NULL DEFAULT 'desktop',
+  os VARCHAR(30) NOT NULL DEFAULT '',
+  browser VARCHAR(30) NOT NULL DEFAULT '',
+  country CHAR(2) NULL,
+  region VARCHAR(40) NULL,
+  city VARCHAR(80) NULL,
+  ip_hash CHAR(64) NULL,
+  referrer VARCHAR(200) NULL,
+  INDEX (qr_id, at),
+  CONSTRAINT fk_scans_qr FOREIGN KEY (qr_id) REFERENCES qr_codes(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
