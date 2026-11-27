@@ -1,3 +1,4 @@
+import '../server/env.js';
 import { resolveTools } from '../server/tools.js';
 const t = resolveTools();
 const win = process.platform === 'win32';

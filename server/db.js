@@ -1,11 +1,11 @@
 // MySQL connection pool and migrations. Settings come from environment variables or a local .env file.
+import './env.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import mysql from 'mysql2/promise';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-try { process.loadEnvFile(path.join(ROOT, '.env')); } catch { /* no .env: use the environment as it is */ }
 
 export function config(overrides = {}) {
   const e = process.env;

@@ -1,5 +1,6 @@
 // Forgot your password? There is no email on a local app: reset it here, on the computer that runs it.
 //   npm run account -- reset someone@example.com
+import '../server/env.js';
 import path from 'node:path';
 import readline from 'node:readline';
 import { createAuth } from '../server/auth.js';
