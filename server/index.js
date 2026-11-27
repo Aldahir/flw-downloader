@@ -1,3 +1,4 @@
+import './env.js'; // must stay first: loads .env before other modules read process.env
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
